@@ -2,12 +2,15 @@ import axios from "axios";
 import crypto from "crypto";
 export const CLIENT_ID = "f15b994280f345438a06222ca529dc94";
 
+require("dotenv").config();
+
+let redirectURL = "http://localhost:5500/auth";
 export async function getToken(code) {
   let postData = {
     client_id: CLIENT_ID,
     grant_type: "authorization_code",
     code: code,
-    redirect_uri: "http://localhost:3006/auth",
+    redirect_uri: redirectURL,
     code_verifier: window.sessionStorage.getItem("hashKey"),
   };
   let form = new URLSearchParams();
@@ -54,7 +57,7 @@ export async function goAuth(redirectTo) {
   window.sessionStorage.setItem("hashResult", hash[1]);
 
   window.location.href = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(
-    "http://localhost:3006/auth"
+    redirectURL
   )}&scope=streaming%20user-read-email%20user-read-private%20user-modify-playback-state&code_challenge_method=S256&code_challenge=${
     hash[1]
   }`;

@@ -11,7 +11,7 @@ export class Room extends React.Component {
   componentDidMount() {
     console.log("room mount");
 
-    this.socket = io("http://localhost:5500/" + this.props.match.params.id);
+    this.socket = io("/" + this.props.match.params.id);
     console.log("room mount");
     this.socket.on("IS_HOST", (isHost) => {
       console.log("ishost", isHost);
