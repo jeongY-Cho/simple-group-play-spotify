@@ -129,6 +129,6 @@ io.on("connection", (socket) => {
   console.log("a user connected");
 });
 
-http.listen(5500, () => {
-  console.log("listening on *:5500");
+http.listen(process.env.PORT || 5500, () => {
+  console.log("listening on *:" + process.env.PORT || 5500);
 });
