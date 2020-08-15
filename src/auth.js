@@ -4,12 +4,7 @@ export const CLIENT_ID = "f15b994280f345438a06222ca529dc94";
 
 require("dotenv").config();
 
-var getUrl = window.location;
-var baseUrl =
-  getUrl.protocol + "//" + getUrl.host + "/" + getUrl.pathname.split("/")[1];
-
-// let redirectURL = "http://localhost:5500/auth";
-let redirectURL = baseUrl + "/auth";
+let redirectURL = window.location.origin + "/auth";
 export async function getToken(code) {
   let postData = {
     client_id: CLIENT_ID,
