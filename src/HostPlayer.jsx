@@ -19,6 +19,7 @@ export default class HostPlayer extends React.Component {
     volume: 0.2,
     hostConnected: false,
     viewPlayer: false,
+    psoCounter: 0,
   };
 
   setHostEmitters = () => {
@@ -26,64 +27,7 @@ export default class HostPlayer extends React.Component {
     this.refreshInterval = setInterval(() => {
       axios.get("/refresh");
     }, 30 * 60 * 1000);
-    let connectedMessage = false;
-    this.player.addListener("player_state_changed", (data) => {
-      if (!connectedMessage) {
-        this.props.socket.emit(
-          "HOST_CONNECTED",
-          data.uri,
-          data.position,
-          !data.paused
-        );
-        connectedMessage = true;
-      }
-      if (data === null) return;
-      const uri = data.track_window.current_track.uri;
-      let retObj = {};
-      if (data.uri != this.state.uri) {
-        this.props.socket.emit("CHANGE", uri);
-        retObj.uri = uri;
-      }
-
-      clearInterval(this.tickInterval);
-
-      if (!data.paused) {
-        this.tickInterval = setInterval(() => {
-          this.setState({
-            position: this.state.position + 1,
-          });
-        }, 1000);
-        retObj.playing = true;
-      } else {
-        retObj.playing = false;
-      }
-      retObj.position = data.position / 1000;
-      retObj.duration = data.duration / 1000;
-
-      if (this.state.playing != retObj.playing) {
-        if (retObj.playing) {
-          this.props.socket.emit("PLAY", uri, data.position);
-        } else {
-          this.props.socket.emit("PAUSE", uri, data.position);
-        }
-      } else {
-        this.props.socket.emit("SEEK", uri, data.position);
-      }
-      const currentTrack = data.track_window.current_track;
-
-      retObj.coverArtURL = currentTrack.album.images[0].url;
-      retObj.album = currentTrack.album.name;
-      retObj.artists = currentTrack.artists;
-      retObj.title = currentTrack.name;
-      retObj.stateObj = data;
-
-      this.setState(retObj);
-      console.log(data);
-    });
   };
-
-  sendConnected = () => {};
-
   connect = () => {
     console.log("once");
     this.player.addListener("ready", (e) => {
@@ -154,9 +98,17 @@ export default class HostPlayer extends React.Component {
         }
       },
     });
-    window.player = this.player;
-
-    window.socket = this.props.socket;
+    this.player.on("player_state_changed", (data) => {
+      console.log(data);
+      if (data) {
+        console.log("alksdfe", data);
+        this.setState({
+          playbackStateObj: data,
+          position: data.position,
+          psoCounter: this.state.psoCounter + 1,
+        });
+      }
+    });
   };
 
   componentDidMount() {
@@ -167,8 +119,47 @@ export default class HostPlayer extends React.Component {
     }
   }
 
+  componentDidUpdate(
+    _prevProps,
+    { playbackStateObj: pPSO, psoCounter: ppsoC }
+  ) {
+    if (this.state.psoCounter == 1) {
+      let {
+        track_window: {
+          current_track: { uri },
+        },
+        position,
+        paused,
+      } = this.state.playbackStateObj;
+      console.log(uri);
+      this.props.socket.emit("HOST_CONNECTED", uri, position, !paused);
+    } else if (ppsoC != this.state.psoCounter) {
+      let {
+        track_window: {
+          current_track: { uri },
+        },
+        position,
+        paused,
+      } = this.state.playbackStateObj;
+      if (pPSO.paused != paused) {
+        this.props.socket.emit("UPDATE", uri, position, !paused);
+
+        if (paused) {
+          clearInterval(this.tickInterval);
+        } else {
+          this.tickInterval = setInterval(() => {
+            this.setState({
+              position: this.state.position + 1000,
+            });
+          }, 1000);
+        }
+      }
+    }
+  }
+
   componentWillUnmount() {
     this.player.removeListener("ready");
+    this.props.socket.disconnect();
     this.player.disconnect();
     delete window.player;
   }
@@ -199,32 +190,34 @@ export default class HostPlayer extends React.Component {
 
   changeVolume = (e) => {
     this.player.setVolume(e.target.value);
-    this.setState({
-      volume: e.target.value,
-    });
   };
 
-  toggleView = () => {
-    this.setState({
-      isHost: !this.state.isHost,
-    });
-  };
   render() {
-    if (!this.state.connected) {
+    if (!this.state.playbackStateObj) {
       return <button onClick={this.connect}>Connect</button>;
     }
+
+    let { paused, duration, volume } = this.state.playbackStateObj;
+    let position = this.state.position;
+    let coverArtURL = this.state.playbackStateObj.track_window.current_track
+      .album.images[0].url;
+    let album = this.state.playbackStateObj.track_window.current_track.album
+      .name;
+    let artists = this.state.playbackStateObj.track_window.current_track
+      .artists;
+    let title = this.state.playbackStateObj.track_window.current_track.name;
 
     return (
       <>
         <Player
-          position={this.state.position}
-          duration={this.state.duration}
-          coverArtURL={this.state.coverArtURL}
-          album={this.state.album}
-          title={this.state.title}
-          artists={this.state.artists}
-          playing={this.state.playing}
-          volume={this.state.volume}
+          position={position / 1000}
+          duration={duration / 1000}
+          coverArtURL={coverArtURL}
+          album={album}
+          title={title}
+          artists={artists}
+          playing={!paused}
+          volume={volume}
           changeVolume={this.changeVolume}
         />
         <div
