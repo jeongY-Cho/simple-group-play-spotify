@@ -5,31 +5,21 @@ import { Player } from "./Player";
 
 export default class HostPlayer extends React.Component {
   state = {
-    position: 0,
-    duration: 0,
-    connected: false,
-    uri: "",
-    playing: false,
-    coverArtURL: "",
-    title: "",
-    artists: [],
-    album: "",
-    device_id: "",
-    volume: 0.2,
     hostConnected: false,
-  };
-
-  changeIfChange = (uri) => {
-    if (!uri) return Promise.resolve();
-    const currentURI = this.state.uri;
-    if (uri != currentURI) {
-      return this.play(uri);
-    }
-    return Promise.resolve();
+    connected: false,
+    artists: [],
+    position: 0,
+    uri: "",
+    duration: 0,
+    volume: 0.2,
+    playing: false,
+    coverArtURL: "#",
+    title: "",
+    album: "",
   };
 
   play = (uri, pos_ms) => {
-    if (!this.state.device_id) return Promise.resolve();
+    console.log("play??", uri, pos_ms);
     return axios.put(
       `https://api.spotify.com/v1/me/player/play?device_id=${this.state.device_id}`,
       {
@@ -39,7 +29,7 @@ export default class HostPlayer extends React.Component {
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${window.localStorage.getItem(
+          Authorization: `Bearer ${window.sessionStorage.getItem(
             "access_token"
           )}`,
         },
@@ -50,90 +40,88 @@ export default class HostPlayer extends React.Component {
   setListenerListeners = () => {
     this.props.socket.on("HOST_DISCONNECT", () => {
       this.player.pause();
+      alert("Host disconnected. Playback Paused");
+    });
+
+    this.props.socket.once("INITIAL", (data) => {
+      if (data) {
+        let { uri, position, playing, when } = data;
+        let calcPos = playing ? position + Date.now() - when : position;
+        console.log("intial", uri, position, calcPos, playing, when);
+        this.setState({
+          uri,
+          position: calcPos,
+          playing,
+          hostConnected: true,
+          connected: true,
+        });
+      } else {
+        this.setState({
+          connected: true,
+        });
+      }
+    });
+    this.props.socket.on("UPDATE", (uri, position, playing) => {
+      console.log("update", uri, position, playing);
+      this.setState({
+        uri,
+        position,
+        playing,
+        hostConnected: true,
+      });
     });
 
     this.props.socket.on("HOST_CONNECTED", (uri, position, playing) => {
-      this.loadInitial(uri, position / 1000, playing);
+      console.log("host_connected");
       this.setState({
-        hostConnected: true,
+        uri,
         position,
-        uri,
         playing,
-      });
-    });
-
-    this.props.socket.on("PLAY", (uri, position) => {
-      this.changeIfChange(uri);
-      clearInterval(this.tickInterval);
-      this.tickInterval = setInterval(() => {
-        this.setState({
-          position: this.state.position + 1,
-        });
-      }, 1000);
-      this.player.seek(position);
-      this.player.resume();
-
-      this.setState({
         hostConnected: true,
-        uri,
-        position: position / 1000,
       });
-    });
-    this.props.socket.on("PAUSE", (uri, position) => {
-      clearInterval(this.tickInterval);
-      this.changeIfChange(uri);
-      this.player.seek(position);
-      this.player.pause();
-      this.setState({
-        hostConnected: true,
-        uri,
-        position: position / 1000,
-      });
-    });
-    this.props.socket.on("CHANGE", (uri) => {
-      this.changeIfChange(uri);
-      this.setState({
-        uri,
-        position: 0,
-        playing: true,
-      });
-    });
-    this.props.socket.on("SEEK", (uri, position, state) => {
-      this.changeIfChange(uri).then(() => {
-        if (state === "PLAY") {
-          this.player.resume();
-        } else {
-          this.player.pause();
-        }
-        this.player.seek(position);
-      });
-
-      this.setState({
-        hostConnected: true,
-        uri,
-        position: position / 1000,
-        playing: state === "PLAY" ? true : false,
-      });
-    });
-    this.props.socket.on("END", () => {
-      this.setState({
-        hostConnected: false,
-      });
-      this.player.disconnect();
     });
 
     this.player.addListener("player_state_changed", (data) => {
+      console.log("player_state_changed");
       if (data === null) return;
-      const currentTrack = data.track_window.current_track;
+
       this.setState({
-        duration: data.duration / 1000,
-        coverArtURL: currentTrack.album.images[0].url,
-        album: currentTrack.album.name,
-        artists: currentTrack.artists,
-        title: currentTrack.name,
+        pso: data,
       });
     });
   };
+
+  async componentDidUpdate(_prevProps, prevState) {
+    if (this.state.hostConnected && this.state.pso) {
+      if (this.state.playing !== !this.state.pso.paused) {
+        if (this.state.playing) {
+          this.player.resume();
+          if (!this.tick) {
+            this.tick = setInterval(() => {
+              this.setState({
+                position: this.state.position + 100,
+              });
+            }, 100);
+          }
+        } else {
+          clearInterval(this.tick);
+          delete this.tick;
+          this.player.pause();
+          this.setState({
+            pso: await this.player.getCurrentState(),
+          });
+        }
+      }
+      if (Math.abs(this.state.position - prevState.position) > 200) {
+        this.player.seek(this.state.position);
+      }
+
+      if (prevState.uri !== this.state.uri) {
+        console.log("setTrack", this.state.uri, this.state.position);
+        this.play(this.state.uri, this.state.position);
+      }
+    }
+  }
 
   connect = () => {
     console.log("once");
@@ -141,17 +129,12 @@ export default class HostPlayer extends React.Component {
       console.log(e);
       this.setListenerListeners();
 
-      this.setState(
-        {
-          connected: true,
-          device_id: e.device_id,
-        },
-        () => {
-          this.connectToPlayer().then(() => {
-            this.props.socket.emit("INITIAL");
-          });
-        }
-      );
+      this.connectToPlayer(e.device_id).then(() => {
+        this.props.socket.emit("INITIAL");
+      });
+      this.setState({
+        device_id: e.device_id,
+      });
     });
     this.player.on("player_state_changed", console.log);
     this.player.on("initialization_error", ({ message }) => {
@@ -168,23 +151,6 @@ export default class HostPlayer extends React.Component {
     });
     this.player.connect().then(console.log);
     console.log("connect");
-    this.props.socket.on("INITIAL", (data) => {
-      console.log("intial", data);
-      if (data) {
-        let stateObj = {
-          uri: data.uri,
-          position: (data.position + Date.now() - data.when) / 1000,
-          playing: data.state === "PLAY" ? true : false,
-          hostConnected: true,
-        };
-        this.loadInitial(data.uri, stateObj.position, stateObj.playing);
-        this.setState(stateObj);
-      } else {
-        this.setState({
-          hostConnected: false,
-        });
-      }
-    });
   };
 
   componentWillUnmount() {
@@ -193,14 +159,14 @@ export default class HostPlayer extends React.Component {
     }
   }
 
-  componentDidMount() {
+  initializePlayer = () => {
     this.player = new window.Spotify.Player({
       volume: 0.2,
       name: "Michael Reeves player",
       getOAuthToken: (callback) => {
-        let token = window.localStorage.getItem("access_token");
-        let refreshToken = window.localStorage.getItem("refresh_token");
-        let expire = window.localStorage.getItem("expires_at");
+        let token = window.sessionStorage.getItem("access_token");
+        let refreshToken = window.sessionStorage.getItem("refresh_token");
+        let expire = window.sessionStorage.getItem("expires_at");
         if (Date.now() > expire && refreshToken) {
           return auth
             .refreshToken(refreshToken)
@@ -208,45 +174,42 @@ export default class HostPlayer extends React.Component {
               callback(data.access_token);
             })
             .catch((e) => {
-              if ((e.error_description = "Refresh Token Revoked")) {
-                window.localStorage.removeItem("refresh_token");
-                window.localStorage.removeItem("access_token");
-                auth.goAuth(this.props.sessionId);
-              }
+              window.sessionStorage.removeItem("refresh_token");
+              window.sessionStorage.removeItem("access_token");
+              auth.goAuth(this.props.sessionId);
             });
         }
 
         if (token) {
           return callback(token);
         }
-        let code = window.localStorage.getItem("code");
+        let code = window.sessionStorage.getItem("code");
         if (code) {
-          auth.getToken(code).then((data) => {
-            window.localStorage.removeItem("code");
-            console.log(data);
-            callback(data.access_token);
-          });
+          auth
+            .getToken(code)
+            .then((data) => {
+              window.sessionStorage.removeItem("code");
+              console.log(data);
+              callback(data.access_token);
+            })
+            .catch(() => {
+              auth.goAuth(this.props.sessionId);
+            });
         } else {
           auth.goAuth(this.props.sessionId);
         }
       },
     });
     window.player = this.player;
-
     this.props.socket.on("CONNECTION_COUNT", console.log);
-    window.socket = this.props.socket;
-  }
+  };
 
-  loadInitial(uri, seek, playing) {
-    this.play(uri, seek * 1000).then(() => {
-      console.log(uri, seek, playing);
-      if (playing) {
-        this.player.pause();
-        this.player.togglePlay();
-      } else {
-        this.player.pause();
-      }
-    });
+  componentDidMount() {
+    if (window.spotifyReady) {
+      this.initializePlayer();
+    } else {
+      window.onSpotifyWebPlaybackSDKReady = this.initializePlayer;
+    }
   }
 
   connectToPlayer = (device_id) => {
@@ -259,20 +222,12 @@ export default class HostPlayer extends React.Component {
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${window.localStorage.getItem(
+          Authorization: `Bearer ${window.sessionStorage.getItem(
             "access_token"
           )}`,
         },
       }
     );
-  };
-
-  startHosting = () => {
-    this.connectToPlayer().then(() => {
-      this.setState({
-        hostConnected: true,
-      });
-    });
   };
 
   changeVolume = (e) => {
@@ -283,25 +238,41 @@ export default class HostPlayer extends React.Component {
   };
 
   render() {
+    if (Date.now() > window.sessionStorage.getItem("expires_at")) {
+      return <button onClick={this.connect}>Login with Spotify</button>;
+    }
+
     if (!this.state.connected) {
-      return <button onClick={this.connect}>Connect</button>;
+      return <button onClick={this.connect}>Join Session</button>;
     }
 
     if (!this.state.hostConnected) {
       return <div>waitingforhost</div>;
     }
 
+    if (!this.state.pso) {
+      return <div>no pso</div>;
+    }
+    let { paused, duration } = this.state.pso;
+    let volume = this.state.volume;
+    let position = this.state.position;
+    let coverArtURL = this.state.pso.track_window.current_track.album.images[0]
+      .url;
+    let album = this.state.pso.track_window.current_track.album.name;
+    let artists = this.state.pso.track_window.current_track.artists;
+    let title = this.state.pso.track_window.current_track.name;
+
     return (
       <>
         <Player
-          position={this.state.position}
-          duration={this.state.duration}
-          coverArtURL={this.state.coverArtURL}
-          album={this.state.album}
-          title={this.state.title}
-          artists={this.state.artists}
-          playing={this.state.playing}
-          volume={this.state.volume}
+          position={position / 1000}
+          duration={duration / 1000}
+          coverArtURL={coverArtURL}
+          album={album}
+          title={title}
+          artists={artists}
+          playing={!paused}
+          volume={volume}
           changeVolume={this.changeVolume}
         />
         <div

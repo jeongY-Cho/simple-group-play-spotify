@@ -1,7 +1,6 @@
 import React from "react";
 import * as auth from "./auth";
 import axios from "axios";
-import { io } from "./App";
 import { Player } from "./Player";
 
 export default class HostPlayer extends React.Component {
@@ -29,18 +28,15 @@ export default class HostPlayer extends React.Component {
     }, 30 * 60 * 1000);
   };
   connect = () => {
-    console.log("once");
     this.player.addListener("ready", (e) => {
       console.log(e);
       this.connectToPlayer(e.device_id);
       this.setHostEmitters();
+      console.log(window.sessionStorage.getItem("expires_at"));
 
-      this.setState(
-        {
-          device_id: e.device_id,
-        },
-        () => {}
-      );
+      this.setState({
+        device_id: e.device_id,
+      });
     });
     this.player.addListener("not_ready", console.log);
     this.player.on("initialization_error", ({ message }) => {
@@ -59,38 +55,45 @@ export default class HostPlayer extends React.Component {
   };
 
   initializePlayer = () => {
-    window.spotifyReady = "in";
-    console.log("playback ready");
     this.player = new window.Spotify.Player({
       volume: 0.2,
       name: "Michael Reeves player",
       getOAuthToken: (callback) => {
-        let token = window.localStorage.getItem("access_token");
-        let refreshToken = window.localStorage.getItem("refresh_token");
-        let expire = window.localStorage.getItem("expires_at");
+        let token = window.sessionStorage.getItem("access_token");
+        let refreshToken = window.sessionStorage.getItem("refresh_token");
+        let expire = window.sessionStorage.getItem("expires_at");
         if (Date.now() > expire && refreshToken) {
           return auth
             .refreshToken(refreshToken)
             .then((data) => {
+              this.setState({
+                loggedIn: true,
+              });
               callback(data.access_token);
             })
             .catch((e) => {
               if ((e.error_description = "Refresh Token Revoked")) {
-                window.localStorage.removeItem("refresh_token");
-                window.localStorage.removeItem("access_token");
+                window.sessionStorage.removeItem("refresh_token");
+                window.sessionStorage.removeItem("access_token");
                 auth.goAuth(this.props.match.params.id);
               }
             });
         }
 
         if (token) {
+          this.setState({
+            loggedIn: true,
+          });
           return callback(token);
         }
-        let code = window.localStorage.getItem("code");
+        let code = window.sessionStorage.getItem("code");
         if (code) {
           auth.getToken(code).then((data) => {
-            window.localStorage.removeItem("code");
+            window.sessionStorage.removeItem("code");
             console.log(data);
+            this.setState({
+              loggedIn: true,
+            });
             callback(data.access_token);
           });
         } else {
@@ -100,6 +103,13 @@ export default class HostPlayer extends React.Component {
     });
     this.player.on("player_state_changed", (data) => {
       console.log(data);
+      if (this.state.psoCounter && !data) {
+        this.props.socket.emit("HOST_DISCONNECT");
+
+        alert(
+          "Spotify disconnected. Check that you are connected to the 'Michael Reeves Player' on Spotify"
+        );
+      }
       if (data) {
         console.log("alksdfe", data);
         this.setState({
@@ -123,7 +133,7 @@ export default class HostPlayer extends React.Component {
     _prevProps,
     { playbackStateObj: pPSO, psoCounter: ppsoC }
   ) {
-    if (this.state.psoCounter == 1) {
+    if (this.state.psoCounter === 1) {
       let {
         track_window: {
           current_track: { uri },
@@ -133,7 +143,7 @@ export default class HostPlayer extends React.Component {
       } = this.state.playbackStateObj;
       console.log(uri);
       this.props.socket.emit("HOST_CONNECTED", uri, position, !paused);
-    } else if (ppsoC != this.state.psoCounter) {
+    } else if (ppsoC !== this.state.psoCounter) {
       let {
         track_window: {
           current_track: { uri },
@@ -141,9 +151,8 @@ export default class HostPlayer extends React.Component {
         position,
         paused,
       } = this.state.playbackStateObj;
-      if (pPSO.paused != paused) {
-        this.props.socket.emit("UPDATE", uri, position, !paused);
-
+      this.props.socket.emit("UPDATE", uri, position, !paused);
+      if (pPSO.paused !== paused) {
         if (paused) {
           clearInterval(this.tickInterval);
         } else {
@@ -175,7 +184,7 @@ export default class HostPlayer extends React.Component {
         {
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${window.localStorage.getItem(
+            Authorization: `Bearer ${window.sessionStorage.getItem(
               "access_token"
             )}`,
           },
@@ -190,14 +199,22 @@ export default class HostPlayer extends React.Component {
 
   changeVolume = (e) => {
     this.player.setVolume(e.target.value);
+    this.setState({
+      volume: e.target.value,
+    });
   };
 
   render() {
-    if (!this.state.playbackStateObj) {
-      return <button onClick={this.connect}>Connect</button>;
+    if (Date.now() > window.sessionStorage.getItem("expires_at")) {
+      return <button onClick={this.connect}>Login with Spotify</button>;
     }
 
-    let { paused, duration, volume } = this.state.playbackStateObj;
+    if (!this.state.playbackStateObj) {
+      return <button onClick={this.connect}>Start Session</button>;
+    }
+
+    let { paused, duration } = this.state.playbackStateObj;
+    let { volume } = this.state;
     let position = this.state.position;
     let coverArtURL = this.state.playbackStateObj.track_window.current_track
       .album.images[0].url;
@@ -230,8 +247,14 @@ export default class HostPlayer extends React.Component {
             marginTop: 10,
           }}
         >
-          You are Hosting Session {this.props.match.params.id} <br />
-          Use Spotify as you usually would.
+          You are the host of this session. <br />
+          Share the url below to listen with others:
+          <div style={{ margin: 10 }}>
+            <input type="text" readOnly value={window.location.href} />
+          </div>
+          Use Spotify as you usually would. <br />
+          Your music is being played in this browser window. Don't close this
+          window.
         </div>
       </>
     );

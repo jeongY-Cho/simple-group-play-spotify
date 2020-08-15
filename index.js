@@ -86,7 +86,7 @@ namespaces.on("connection", (socket) => {
         uri,
         position,
         when: Date.now(),
-        state: playing ? "PLAY" : "PAUSE",
+        playing,
       };
     });
 
